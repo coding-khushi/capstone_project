@@ -1,0 +1,55 @@
+[
+  {
+    "id": "SC-01",
+    "phase": "screen_only",
+    "description": "Error identification from visible screen",
+    "question": "What error is displayed on the screen?",
+    "requires_retrieval": false,
+    "expected_keywords": ["TypeError", "undefined", "error"]
+  },
+  {
+    "id": "SC-02",
+    "phase": "screen_only",
+    "description": "Code explanation from visible snippet",
+    "question": "What does this function do?",
+    "requires_retrieval": false,
+    "expected_keywords": []
+  },
+  {
+    "id": "RT-01",
+    "phase": "retrieval",
+    "description": "Function definition lookup",
+    "question": "Where is calculate_total defined?",
+    "requires_retrieval": true,
+    "retrieval_tool": "find_definition",
+    "retrieval_symbol": "calculate_total",
+    "expected_keywords": ["utils.py", "def calculate_total"]
+  },
+  {
+    "id": "RT-02",
+    "phase": "retrieval",
+    "description": "Cross-file error explanation",
+    "question": "Why is this function returning None?",
+    "requires_retrieval": true,
+    "retrieval_tool": "find_definition",
+    "expected_keywords": ["return", "None"]
+  },
+  {
+    "id": "RT-03",
+    "phase": "retrieval",
+    "description": "Reference lookup",
+    "question": "Where is this function being called?",
+    "requires_retrieval": true,
+    "retrieval_tool": "find_references",
+    "expected_keywords": []
+  },
+  {
+    "id": "RT-04",
+    "phase": "retrieval",
+    "description": "Project structure navigation",
+    "question": "What files are in this project?",
+    "requires_retrieval": true,
+    "retrieval_tool": "get_project_structure",
+    "expected_keywords": []
+  }
+]
