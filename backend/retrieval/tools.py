@@ -1,9 +1,8 @@
-"""Phase 9: Retrieval tools exposed to the agent.
-
-Each function matches a named tool in the agent's tool schema.
-Implementations are filled in per phase.
-"""
+"""Retrieval tools exposed to the agent. Phases 6, 9."""
 from __future__ import annotations
+
+import platform
+import subprocess
 
 
 def get_screen() -> dict:
@@ -12,8 +11,33 @@ def get_screen() -> dict:
 
 
 def get_active_file() -> dict:
-    """Return the file currently open/focused."""
-    raise NotImplementedError("Phase 6")
+    """Phase 6: Detect the file currently open in VS Code (macOS only via AppleScript)."""
+    if platform.system() != "Darwin":
+        return {"path": None, "app": None}
+
+    script = """
+    tell application "System Events"
+        set frontApp to name of first application process whose frontmost is true
+    end tell
+    if frontApp is "Code" then
+        tell application "Visual Studio Code"
+            set w to front window
+            set doc to name of w
+        end tell
+        return doc
+    else
+        return ""
+    end if
+    """
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=2,
+        )
+        path = result.stdout.strip()
+        return {"path": path if path else None, "app": "Visual Studio Code"}
+    except Exception:
+        return {"path": None, "app": None}
 
 
 def get_file(path: str) -> dict:
