@@ -88,14 +88,32 @@ export default function ChatPanel({ onClose }: Props) {
     setPendingScreenshot(null)
     setIsLoading(true)
 
-    // Placeholder: will connect to FastAPI backend in Phase 5
-    await new Promise(r => setTimeout(r, 800))
-    addAssistantMessage(
-      pendingScreenshot
-        ? "I can see your screenshot. In Phase 5, I'll connect to the AI backend to analyze it. For now, the capture pipeline is working."
-        : "Backend not connected yet — this will go live in Phase 5 when FastAPI is running.",
-    )
-    setIsLoading(false)
+    try {
+      const response = await fetch('http://localhost:8000/api/v1/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: text || 'What do you see on my screen?',
+          screenshot_b64: userMessage.screenshot ?? null,
+          active_file: null,
+        }),
+      })
+
+      if (!response.ok) {
+        const err = await response.text()
+        throw new Error(`Backend ${response.status}: ${err}`)
+      }
+
+      const data = await response.json()
+      addAssistantMessage(data.answer)
+    } catch (err) {
+      addAssistantMessage(
+        `Could not reach backend: ${err instanceof Error ? err.message : String(err)}. ` +
+        'Make sure the FastAPI server is running on port 8000.'
+      )
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {

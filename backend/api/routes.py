@@ -1,5 +1,10 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from screen.processor import process_screenshot
+from ai.context_manager import ask_claude
+from retrieval.tools import get_active_file
+from indexing.indexer import index_project_path, get_project_structure
 
 router = APIRouter()
 
@@ -19,21 +24,37 @@ class QueryResponse(BaseModel):
 
 @router.post("/query", response_model=QueryResponse)
 async def query(req: QueryRequest):
-    # Phase 5: wire up context_manager → agent → LLM
-    return QueryResponse(
-        answer="Backend placeholder — Phase 5 will connect the AI pipeline here.",
-        sources=[],
-        tools_used=[],
+    screen = None
+    if req.screenshot_b64:
+        try:
+            screen = process_screenshot(req.screenshot_b64)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    active_file = req.active_file or get_active_file().get("path")
+
+    answer, tools_used = ask_claude(
+        question=req.question,
+        screen=screen,
+        active_file=active_file,
     )
+
+    return QueryResponse(answer=answer, sources=[], tools_used=tools_used)
 
 
 @router.post("/index")
 async def index_project(project_path: str):
-    # Phase 7: trigger project indexer
-    return {"status": "indexing_not_yet_implemented", "path": project_path}
+    try:
+        stats = index_project_path(project_path)
+        return {"status": "ok", "path": project_path, **stats}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/project/structure")
-async def get_project_structure(project_path: str):
-    # Phase 9: return tree-sitter parsed structure
-    return {"structure": None, "message": "Phase 9"}
+async def get_structure(project_path: str):
+    try:
+        structure = get_project_structure(project_path)
+        return {"structure": structure}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
