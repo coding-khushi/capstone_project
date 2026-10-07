@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from screen.processor import process_screenshot
-from ai.context_manager import ask_claude
+from ai.context_manager import ask_gemini
 from retrieval.tools import get_active_file
 from indexing.indexer import index_project_path, get_project_structure
 
@@ -33,7 +33,7 @@ async def query(req: QueryRequest):
 
     active_file = req.active_file or get_active_file().get("path")
 
-    answer, tools_used = ask_claude(
+    answer, tools_used = ask_gemini(
         question=req.question,
         screen=screen,
         active_file=active_file,
