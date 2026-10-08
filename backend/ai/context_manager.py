@@ -1,8 +1,4 @@
-<<<<<<< ours
 """Phase 5: Gemini API. Phase 10: context routing + retrieval injection."""
-=======
-"""Gemini vision integration for Percept."""
->>>>>>> theirs
 from __future__ import annotations
 
 import base64
@@ -18,7 +14,6 @@ from screen.processor import ScreenContext
 
 load_dotenv()
 
-# Use the Flash model configured for fast screen-aware responses.
 GEMINI_MODEL = "gemini-3.8-flash"
 
 SYSTEM_PROMPT = """
@@ -60,7 +55,6 @@ class ContextDecision:
     reasoning: str = ""
 
 
-<<<<<<< ours
 def decide(question: str, screen: ScreenContext | None) -> ContextDecision:
     """Decide whether the screenshot alone is enough or retrieval is needed."""
     q_lower = question.lower()
@@ -86,14 +80,6 @@ def decide(question: str, screen: ScreenContext | None) -> ContextDecision:
         reasoning="Visual context appears sufficient.",
     )
 
-=======
-def decide(question: str, screen: ScreenContext) -> ContextDecision:
-    """Phase 10 placeholder for smarter context routing."""
-    return ContextDecision(
-        screen_sufficient=True,
-        reasoning="Current implementation uses the supplied screen context.",
-    )
->>>>>>> theirs
 
 # ---------------------------------------------------------------------------
 # Phase 5 + 9 + 10: Ask Gemini with optional retrieval context
@@ -103,24 +89,16 @@ def ask_gemini(
     question: str,
     screen: ScreenContext | None = None,
     active_file: str | None = None,
-<<<<<<< ours
 ) -> tuple[str, list[str], list[str]]:
     """Send question to Gemini, injecting retrieval context when needed.
 
     Returns (answer, tools_used, sources).
     """
-=======
-) -> tuple[str, list[str]]:
-    """Send a question and optional screenshot to Gemini."""
-
->>>>>>> theirs
     api_key = os.getenv("GOOGLE_API_KEY")
-
     if not api_key:
         return (
             "GOOGLE_API_KEY is not set. "
-<<<<<<< ours
-            "Add it to backend/.env and restart the server.",
+            "Add GOOGLE_API_KEY to backend/.env and restart the server.",
             [], [],
         )
 
@@ -138,7 +116,6 @@ def ask_gemini(
     if not decision.screen_sufficient:
         from retrieval.tools import search_project, find_definition
 
-        # Semantic search
         results = search_project(question, top_k=4)
         if results:
             tools_used.append("project_search")
@@ -151,7 +128,6 @@ def ask_gemini(
                 )
             retrieval_text = "\n\n".join(snippets)
 
-        # Symbol lookup for backtick-quoted names
         for sym in decision.missing_symbols:
             defn = find_definition(sym)
             if defn and defn["file"] not in sources:
@@ -161,27 +137,14 @@ def ask_gemini(
                     f"{defn['file']} line {defn['line_start']} ({defn['kind']})"
                 )
 
-    # Build Gemini request
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        model_name=GEMINI_MODEL,
-        system_instruction=SYSTEM_PROMPT,
-    )
-=======
-            "Add GOOGLE_API_KEY to backend/.env and restart the server.",
-            [],
-        )
-
+    # Build Gemini request using the google-genai SDK
     client = genai.Client(api_key=api_key)
->>>>>>> theirs
-
     contents = []
 
-    # Add screenshot when available.
+    # Add screenshot
     if screen and screen.raw_screenshot_b64:
         try:
             image_bytes = base64.b64decode(screen.raw_screenshot_b64)
-
             contents.append(
                 types.Part.from_bytes(
                     data=image_bytes,
@@ -189,24 +152,15 @@ def ask_gemini(
                 )
             )
         except Exception as exc:
-            return (
-                f"I couldn't process the screenshot: {exc}",
-                [],
-            )
+            return f"I couldn't process the screenshot: {exc}", [], []
 
-    # Build the user's context.
-    context_parts = []
-
+    # Build text context
+    context_parts: list[str] = []
     if active_file:
         context_parts.append(f"Active file: {active_file}")
-
-    if question:
-        context_parts.append(f"User question: {question}")
-    else:
-        context_parts.append(
-            "Describe what is currently visible on the screen."
-        )
-
+    if retrieval_text:
+        context_parts.append(f"Relevant code from project:\n{retrieval_text}")
+    context_parts.append(question or "Describe what is currently visible on the screen.")
     contents.append("\n\n".join(context_parts))
 
     try:
@@ -218,31 +172,8 @@ def ask_gemini(
                 temperature=0.2,
             ),
         )
-
-<<<<<<< ours
-    text_parts: list[str] = []
-    if active_file:
-        text_parts.append(f"Active file: {active_file}")
-    if retrieval_text:
-        text_parts.append(f"Relevant code from project:\n{retrieval_text}")
-    text_parts.append(question or "What do you see on my screen?")
-
-    parts.append("\n\n".join(text_parts))
-
-    response = model.generate_content(parts)
-    return response.text, tools_used, list(dict.fromkeys(sources))  # deduplicated
-=======
         answer = response.text or "I couldn't generate a response."
-
-        tools_used = []
-        if screen and screen.raw_screenshot_b64:
-            tools_used.append("screenshot")
-
-        return answer, tools_used
-
     except Exception as exc:
-        return (
-            f"Gemini request failed: {exc}",
-            [],
-        )
->>>>>>> theirs
+        return f"Gemini API error: {exc}", tools_used, sources
+
+    return answer, tools_used, list(dict.fromkeys(sources))
