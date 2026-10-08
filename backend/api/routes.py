@@ -33,13 +33,13 @@ async def query(req: QueryRequest):
 
     active_file = req.active_file or get_active_file().get("path")
 
-    answer, tools_used = ask_gemini(
+    answer, tools_used, sources = ask_gemini(
         question=req.question,
         screen=screen,
         active_file=active_file,
     )
 
-    return QueryResponse(answer=answer, sources=[], tools_used=tools_used)
+    return QueryResponse(answer=answer, sources=sources, tools_used=tools_used)
 
 
 @router.post("/index")

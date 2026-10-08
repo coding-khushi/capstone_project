@@ -7,6 +7,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from database.models import Project, ProjectFile, Symbol, init_db
+from indexing.embeddings import embed_and_store
 
 SKIP_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv",
@@ -155,6 +156,12 @@ def index_project_path(root_path: str) -> dict:
                     stats["symbols_found"] += len(symbols)
 
                 stats["files_indexed"] += 1
+
+        # Phase 8: generate and store embeddings
+        try:
+            stats["embeddings"] = embed_and_store(project.id, session)
+        except Exception:
+            stats["embeddings"] = 0  # sentence-transformers not installed yet
 
         session.commit()
 
