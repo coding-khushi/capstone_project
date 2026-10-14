@@ -14,7 +14,7 @@ from screen.processor import ScreenContext
 
 load_dotenv()
 
-GEMINI_MODEL = "gemini-3.8-flash"
+GEMINI_MODEL = "gemini-3.5-flash-lite"
 
 SYSTEM_PROMPT = """
 You are Percept, an AI assistant embedded in the user's desktop.

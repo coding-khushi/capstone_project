@@ -85,7 +85,6 @@ export default function ChatPanel({ onClose }: Props) {
 
     setMessages(prev => [...prev, userMessage])
     setInput('')
-    setPendingScreenshot(null)
     setIsLoading(true)
 
     try {

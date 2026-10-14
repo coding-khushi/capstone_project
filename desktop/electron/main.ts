@@ -85,10 +85,17 @@ function positionWindow() {
 // IPC: capture screenshot
 ipcMain.handle('capture-screen', async () => {
   try {
+    // Hide window so it doesn't appear in the screenshot
+    mainWindow?.hide()
+    await new Promise(resolve => setTimeout(resolve, 300))
+
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
       thumbnailSize: { width: 1920, height: 1080 },
     })
+
+    // Show window again
+    mainWindow?.show()
 
     if (sources.length === 0) return { success: false, error: 'No screen sources found' }
 
@@ -96,6 +103,7 @@ ipcMain.handle('capture-screen', async () => {
     const dataURL = primarySource.thumbnail.toDataURL()
     return { success: true, dataURL }
   } catch (err) {
+    mainWindow?.show()
     return { success: false, error: String(err) }
   }
 })
