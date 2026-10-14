@@ -1,9 +1,8 @@
-"""Phase 5: Gemini API. Phase 10: context routing + retrieval injection."""
+"""Phase 5 + 10 + 11: Gemini agent with function calling, context routing, and file permissions."""
 from __future__ import annotations
 
 import base64
 import os
-import re
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
@@ -15,165 +14,243 @@ from screen.processor import ScreenContext
 load_dotenv()
 
 GEMINI_MODEL = "gemini-3.5-flash-lite"
+MAX_TOOL_CALLS = 4
 
 SYSTEM_PROMPT = """
 You are Percept, an AI assistant embedded in the user's desktop.
 
-You can see the user's screen through screenshots and help them understand
-what is currently visible.
+You can see the user's screen through screenshots and help them understand what is happening.
 
-Your responsibilities:
-- Understand the screenshot visually.
-- Answer questions about applications, UI, errors, text, websites, and code
-  visible on the screen.
-- Use the active file information when provided.
-- If the screenshot contains code, explain or debug the visible code.
-- If the screenshot contains an error, identify the likely cause and suggest
-  a practical fix.
-- Do not pretend to see information that is not visible.
-- Be concise and direct.
+You have tools to look up code in the user's indexed project:
+- search_project: semantic search over the codebase
+- find_definition: find where a symbol is defined
+- find_references: find where a symbol is used
+- get_file: read a full file (only when explicitly permitted by the user)
+
+Rules:
+- Use tools when the question requires code context beyond what is visible on screen.
+- Use get_file only if you genuinely need the full file and the user has granted access.
+- Keep answers concise and actionable.
+- Do not pretend to see information that is not in the screenshot or tool results.
 """
 
-# Keywords that signal the user is asking about their codebase
-_RETRIEVAL_TRIGGERS = {
-    "function", "class", "method", "file", "module", "import",
-    "how does", "where is", "what does", "implementation", "defined",
-    "definition", "reference", "called", "returns", "parameter",
-    "variable", "interface", "type", "error", "bug", "why is",
-}
+
+def _build_tools() -> list:
+    return [types.Tool(function_declarations=[
+        types.FunctionDeclaration(
+            name="search_project",
+            description="Semantic search over the indexed codebase. Use for general questions about how code works.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "query": types.Schema(type=types.Type.STRING, description="Natural language search query"),
+                },
+                required=["query"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="find_definition",
+            description="Find where a function, class, or variable is defined in the project.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "symbol": types.Schema(type=types.Type.STRING, description="Symbol name to look up"),
+                },
+                required=["symbol"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="find_references",
+            description="Find all places in the codebase where a symbol is used.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "symbol": types.Schema(type=types.Type.STRING, description="Symbol name"),
+                },
+                required=["symbol"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="get_file",
+            description="Read the full contents of a file. Only call this when the user has granted permission.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "path": types.Schema(type=types.Type.STRING, description="File path relative to project root"),
+                },
+                required=["path"],
+            ),
+        ),
+    ])]
 
 
-# ---------------------------------------------------------------------------
-# Phase 10: Context decision
-# ---------------------------------------------------------------------------
+def _execute_tool(
+    name: str,
+    args: dict,
+    permitted_files: list[str],
+    sources: list[str],
+) -> tuple[str, str | None]:
+    """Execute a retrieval tool. Returns (result_text, permission_needed_path or None)."""
+    from retrieval.tools import search_project, find_definition, find_references, get_file
 
-@dataclass
-class ContextDecision:
-    screen_sufficient: bool
-    missing_symbols: list[str] = field(default_factory=list)
-    retrieval_queries: list[str] = field(default_factory=list)
-    reasoning: str = ""
+    if name == "search_project":
+        results = search_project(args.get("query", ""), top_k=4)
+        if not results:
+            return "No relevant code found in the indexed project.", None
+        lines = []
+        for r in results:
+            if r["file"] not in sources:
+                sources.append(r["file"])
+            lines.append(
+                f"// {r['file']} (lines {r.get('line_start', '?')}-{r.get('line_end', '?')})\n{r['text']}"
+            )
+        return "\n\n".join(lines), None
 
+    elif name == "find_definition":
+        result = find_definition(args.get("symbol", ""))
+        if not result:
+            return f"No definition found for '{args.get('symbol')}'.", None
+        if result["file"] not in sources:
+            sources.append(result["file"])
+        return (
+            f"'{args.get('symbol')}' is defined in {result['file']} "
+            f"at line {result['line_start']} ({result['kind']})"
+        ), None
 
-def decide(question: str, screen: ScreenContext | None) -> ContextDecision:
-    """Decide whether the screenshot alone is enough or retrieval is needed."""
-    q_lower = question.lower()
+    elif name == "find_references":
+        from retrieval.tools import find_references as _find_refs
+        results = _find_refs(args.get("symbol", ""))
+        if not results:
+            return f"No references found for '{args.get('symbol')}'.", None
+        lines = [f"{r['file']}:{r['line']} — {r['text']}" for r in results[:8]]
+        return "\n".join(lines), None
 
-    # Backtick-quoted symbols are an explicit code reference
-    symbols = re.findall(r'`(\w+)`', question)
+    elif name == "get_file":
+        path = args.get("path", "")
+        if path not in permitted_files:
+            return f"Access to '{path}' requires user permission.", path
+        result = get_file(path)
+        if "error" in result:
+            return f"Could not read file: {result['error']}", None
+        if path not in sources:
+            sources.append(path)
+        content = result.get("content", "")
+        if len(content) > 8000:
+            content = content[:8000] + "\n... (file truncated at 8000 chars)"
+        return f"Contents of {path}:\n{content}", None
 
-    needs_retrieval = (
-        bool(symbols)
-        or any(trigger in q_lower for trigger in _RETRIEVAL_TRIGGERS)
-    )
+    return f"Unknown tool: {name}", None
 
-    if needs_retrieval:
-        return ContextDecision(
-            screen_sufficient=False,
-            missing_symbols=symbols,
-            retrieval_queries=[question],
-            reasoning="Question references code constructs — adding project context.",
-        )
-
-    return ContextDecision(
-        screen_sufficient=True,
-        reasoning="Visual context appears sufficient.",
-    )
-
-
-# ---------------------------------------------------------------------------
-# Phase 5 + 9 + 10: Ask Gemini with optional retrieval context
-# ---------------------------------------------------------------------------
 
 def ask_gemini(
     question: str,
     screen: ScreenContext | None = None,
     active_file: str | None = None,
-) -> tuple[str, list[str], list[str]]:
-    """Send question to Gemini, injecting retrieval context when needed.
+    permitted_files: list[str] | None = None,
+) -> tuple[str, list[str], list[str], list[str]]:
+    """Run the Percept agent loop.
 
-    Returns (answer, tools_used, sources).
+    Returns (answer, tools_used, sources, permission_required).
+    permission_required is non-empty when the agent needs file access before it can answer.
     """
+    if permitted_files is None:
+        permitted_files = []
+
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         return (
-            "GOOGLE_API_KEY is not set. "
-            "Add GOOGLE_API_KEY to backend/.env and restart the server.",
-            [], [],
+            "GOOGLE_API_KEY is not set. Add it to backend/.env and restart the server.",
+            [], [], [],
         )
 
-    # Phase 10: routing decision
-    decision = decide(question, screen)
-
-    # Phase 9: retrieve project context if needed
-    retrieval_text = ""
-    sources: list[str] = []
+    client = genai.Client(api_key=api_key)
     tools_used: list[str] = []
+    sources: list[str] = []
+    permission_required: list[str] = []
+
+    # Build the initial user message parts
+    initial_parts: list = []
 
     if screen and screen.raw_screenshot_b64:
         tools_used.append("screenshot")
-
-    if not decision.screen_sufficient:
-        from retrieval.tools import search_project, find_definition
-
-        results = search_project(question, top_k=4)
-        if results:
-            tools_used.append("project_search")
-            snippets = []
-            for r in results:
-                sources.append(r["file"])
-                snippets.append(
-                    f"// {r['file']} (lines {r.get('line_start', '?')}-{r.get('line_end', '?')})\n"
-                    f"{r['text']}"
-                )
-            retrieval_text = "\n\n".join(snippets)
-
-        for sym in decision.missing_symbols:
-            defn = find_definition(sym)
-            if defn and defn["file"] not in sources:
-                sources.append(defn["file"])
-                retrieval_text += (
-                    f"\n\nDefinition of `{sym}`: "
-                    f"{defn['file']} line {defn['line_start']} ({defn['kind']})"
-                )
-
-    # Build Gemini request using the google-genai SDK
-    client = genai.Client(api_key=api_key)
-    contents = []
-
-    # Add screenshot
-    if screen and screen.raw_screenshot_b64:
         try:
             image_bytes = base64.b64decode(screen.raw_screenshot_b64)
-            contents.append(
-                types.Part.from_bytes(
-                    data=image_bytes,
-                    mime_type=screen.media_type,
-                )
+            initial_parts.append(
+                types.Part.from_bytes(data=image_bytes, mime_type=screen.media_type)
             )
         except Exception as exc:
-            return f"I couldn't process the screenshot: {exc}", [], []
+            return f"Could not process screenshot: {exc}", [], [], []
 
-    # Build text context
-    context_parts: list[str] = []
+    text_parts: list[str] = []
     if active_file:
-        context_parts.append(f"Active file: {active_file}")
-    if retrieval_text:
-        context_parts.append(f"Relevant code from project:\n{retrieval_text}")
-    context_parts.append(question or "Describe what is currently visible on the screen.")
-    contents.append("\n\n".join(context_parts))
+        text_parts.append(f"Active file: {active_file}")
+    text_parts.append(question or "Describe what is currently visible on the screen.")
+    initial_parts.append(types.Part.from_text("\n\n".join(text_parts)))
 
     try:
-        response = client.models.generate_content(
+        chat = client.chats.create(
             model=GEMINI_MODEL,
-            contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
+                tools=_build_tools(),
                 temperature=0.2,
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             ),
         )
-        answer = response.text or "I couldn't generate a response."
+        response = chat.send_message(initial_parts)
     except Exception as exc:
-        return f"Gemini API error: {exc}", tools_used, sources
+        return f"Gemini API error: {exc}", tools_used, sources, []
 
-    return answer, tools_used, list(dict.fromkeys(sources))
+    # Agent loop — up to MAX_TOOL_CALLS iterations
+    for _ in range(MAX_TOOL_CALLS):
+        # Collect function calls from the response
+        function_calls = []
+        if response.candidates and response.candidates[0].content.parts:
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, "function_call") and part.function_call:
+                    function_calls.append(part.function_call)
+
+        if not function_calls:
+            break
+
+        # Execute each tool and collect responses
+        tool_response_parts: list = []
+        for fc in function_calls:
+            tool_name = fc.name
+            tool_args = dict(fc.args) if fc.args else {}
+
+            if tool_name not in tools_used:
+                tools_used.append(tool_name)
+
+            result_text, perm_needed = _execute_tool(
+                tool_name, tool_args, permitted_files, sources
+            )
+
+            if perm_needed and perm_needed not in permission_required:
+                permission_required.append(perm_needed)
+
+            tool_response_parts.append(
+                types.Part(
+                    function_response=types.FunctionResponse(
+                        name=tool_name,
+                        response={"result": result_text},
+                    )
+                )
+            )
+
+        # If any file permissions are needed, stop and ask the user
+        if permission_required:
+            return (
+                "__permission_required__",
+                tools_used,
+                sources,
+                permission_required,
+            )
+
+        try:
+            response = chat.send_message(tool_response_parts)
+        except Exception as exc:
+            return f"Gemini API error during tool execution: {exc}", tools_used, sources, []
+
+    answer = response.text or "I couldn't generate a response."
+    return answer, tools_used, list(dict.fromkeys(sources)), []

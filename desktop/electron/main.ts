@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, Tray, Menu, ipcMain, screen, desktopCapturer, nativeImage } from 'electron'
+import { app, BrowserWindow, globalShortcut, Tray, Menu, ipcMain, screen, desktopCapturer, nativeImage, dialog } from 'electron'
 import path from 'path'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
@@ -117,6 +117,24 @@ ipcMain.handle('hide-window', () => {
 ipcMain.handle('get-window-state', () => ({
   isVisible: mainWindow?.isVisible() ?? false,
 }))
+
+// IPC: get screen source ID for renderer-side MediaRecorder
+ipcMain.handle('get-screen-source', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'] })
+    if (sources.length === 0) return { success: false, error: 'No screen sources found' }
+    return { success: true, sourceId: sources[0].id }
+  } catch (err) {
+    return { success: false, error: String(err) }
+  }
+})
+
+// IPC: open folder picker dialog for project selection
+ipcMain.handle('select-folder', async () => {
+  const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+  if (result.canceled || result.filePaths.length === 0) return { path: null }
+  return { path: result.filePaths[0] }
+})
 
 app.whenReady().then(() => {
   createWindow()
