@@ -22,6 +22,7 @@ declare global {
       captureScreen: () => Promise<{ success: boolean; dataURL?: string; error?: string }>
       getScreenSource: () => Promise<{ success: boolean; sourceId?: string; error?: string }>
       selectFolder: () => Promise<{ path: string | null }>
+      selectFile: (hint?: string) => Promise<{ path: string | null }>
       hideWindow: () => Promise<void>
       getWindowState: () => Promise<{ isVisible: boolean }>
     }
@@ -42,9 +43,13 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
   const [isRecording, setIsRecording] = useState(false)
   const [showCapturedToast, setShowCapturedToast] = useState(false)
 
-  // Pending permission request state
+  // Pending hard permission (get_file mid-loop)
   const [pendingPermission, setPendingPermission] = useState<string[] | null>(null)
   const [pendingQuery, setPendingQuery] = useState<{ question: string; frameDataURL: string | null } | null>(null)
+
+  // Soft file suggestion (Gemini spotted a file on screen)
+  const [suggestedFiles, setSuggestedFiles] = useState<string[] | null>(null)
+  const [alreadyPermitted, setAlreadyPermitted] = useState<Set<string>>(new Set())
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -117,7 +122,12 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
     ])
   }
 
-  async function sendQuery(question: string, frameDataURL: string | null, permittedFiles: string[] = []) {
+  async function sendQuery(
+    question: string,
+    frameDataURL: string | null,
+    permittedFiles: string[] = [],
+    suppressSuggestions: Set<string> = new Set(),
+  ) {
     setIsLoading(true)
     try {
       const response = await fetch('http://localhost:8000/api/v1/query', {
@@ -139,13 +149,20 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
       const data = await response.json()
 
       if (data.permission_required && data.permission_required.length > 0) {
-        // Store the pending query so we can re-send after permission is granted
         setPendingQuery({ question, frameDataURL })
         setPendingPermission(data.permission_required)
         return
       }
 
       addAssistantMessage(data.answer)
+
+      if (data.suggested_files?.length > 0) {
+        // Use suppressSuggestions (passed-in fresh set) to avoid stale closure on alreadyPermitted
+        const fresh = data.suggested_files.filter(
+          (f: string) => !alreadyPermitted.has(f) && !suppressSuggestions.has(f)
+        )
+        if (fresh.length > 0) setSuggestedFiles(fresh)
+      }
 
       if (data.sources?.length > 0) {
         addAssistantMessage(`_Sources: ${data.sources.join(', ')}_`)
@@ -180,8 +197,11 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
     }
     setMessages(prev => [...prev, userMessage])
     setInput('')
+    setSuggestedFiles(null)
+    setPendingQuery({ question: text, frameDataURL })
 
-    await sendQuery(text, frameDataURL)
+    // Pass already-permitted files so the backend injects their content on every query
+    await sendQuery(text, frameDataURL, [...alreadyPermitted])
   }
 
   async function handlePermissionApprove(files: string[]) {
@@ -196,6 +216,25 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
     setPendingPermission(null)
     setPendingQuery(null)
     addAssistantMessage("File access denied. I'll answer with what I can see on screen only.")
+  }
+
+  async function handleSuggestionAllow() {
+    if (!suggestedFiles || !pendingQuery) return
+
+    // Open a file picker so the user picks the actual file path on disk
+    const hint = suggestedFiles[0]
+    const result = await window.percept.selectFile(hint)
+    if (!result.path) return  // user canceled — keep banner visible
+
+    const actualPath = result.path
+    const newPermitted = new Set([...alreadyPermitted, actualPath])
+    setAlreadyPermitted(newPermitted)
+    setSuggestedFiles(null)
+    await sendQuery(pendingQuery.question, pendingQuery.frameDataURL, [actualPath], newPermitted)
+  }
+
+  function handleSuggestionDismiss() {
+    setSuggestedFiles(null)
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -260,6 +299,23 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Soft file suggestion banner */}
+      {suggestedFiles && suggestedFiles.length > 0 && (
+        <div className="suggestion-banner">
+          <div className="suggestion-text">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+              <circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" strokeWidth="1.3"/>
+              <path d="M6.5 5.5v4M6.5 4h.01" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+            </svg>
+            I can answer better with access to <strong>{suggestedFiles[0].split('/').pop() ?? suggestedFiles[0]}</strong>
+          </div>
+          <div className="suggestion-actions">
+            <button className="suggestion-dismiss" onClick={handleSuggestionDismiss}>Skip</button>
+            <button className="suggestion-allow" onClick={handleSuggestionAllow}>Allow Once</button>
+          </div>
+        </div>
+      )}
 
       {/* Frame captured toast */}
       {showCapturedToast && (

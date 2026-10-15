@@ -1,3 +1,7 @@
+import ReactMarkdown from 'react-markdown'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import 'katex/dist/katex.min.css'
 import { ChatMessage } from './ChatPanel'
 import './Message.css'
 
@@ -21,7 +25,18 @@ export default function Message({ message }: Props) {
             alt="Screen capture"
           />
         )}
-        <div className="message-text">{message.content}</div>
+        <div className="message-text">
+          {isUser ? (
+            message.content
+          ) : (
+            <ReactMarkdown
+              remarkPlugins={[remarkMath]}
+              rehypePlugins={[rehypeKatex]}
+            >
+              {message.content}
+            </ReactMarkdown>
+          )}
+        </div>
         <div className="message-time">
           {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </div>

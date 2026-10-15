@@ -77,6 +77,24 @@
 
 .folder-btn:hover { border-color: var(--accent); }
 
+.folder-input {
+  width: 100%;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 8px 10px;
+  outline: none;
+  font-family: monospace;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+
+.folder-input:focus { border-color: var(--accent); }
+
+.folder-input::placeholder { color: var(--text-muted); }
+
 .folder-path {
   font-size: 10px;
   color: var(--text-muted);

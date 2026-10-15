@@ -70,3 +70,61 @@
   color: var(--text-muted);
   padding: 0 4px;
 }
+
+/* Markdown content inside assistant messages */
+.message-assistant .message-text p {
+  margin: 0 0 6px;
+}
+.message-assistant .message-text p:last-child { margin-bottom: 0; }
+
+.message-assistant .message-text ul,
+.message-assistant .message-text ol {
+  margin: 4px 0 6px;
+  padding-left: 18px;
+}
+.message-assistant .message-text li { margin-bottom: 3px; }
+
+.message-assistant .message-text strong { color: var(--text-primary); font-weight: 700; }
+.message-assistant .message-text em { opacity: 0.85; }
+
+.message-assistant .message-text code {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+  font-family: monospace;
+}
+
+.message-assistant .message-text pre {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+.message-assistant .message-text pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+}
+
+.message-assistant .message-text h1,
+.message-assistant .message-text h2,
+.message-assistant .message-text h3 {
+  margin: 6px 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* KaTeX math sizing */
+.message-assistant .message-text .katex {
+  font-size: 1em;
+}
+.message-assistant .message-text .katex-display {
+  margin: 8px 0;
+  overflow-x: auto;
+}

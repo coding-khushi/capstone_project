@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld('percept', {
   selectFolder: (): Promise<{ path: string | null }> =>
     ipcRenderer.invoke('select-folder'),
 
+  selectFile: (hint?: string): Promise<{ path: string | null }> =>
+    ipcRenderer.invoke('select-file', hint),
+
   hideWindow: (): Promise<void> =>
     ipcRenderer.invoke('hide-window'),
 

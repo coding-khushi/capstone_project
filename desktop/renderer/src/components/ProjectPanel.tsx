@@ -73,8 +73,17 @@ export default function ProjectPanel({ onClose }: Props) {
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M1 4a1 1 0 011-1h3l1.5 1.5H12a1 1 0 011 1V11a1 1 0 01-1 1H2a1 1 0 01-1-1V4z" stroke="currentColor" strokeWidth="1.3"/>
           </svg>
-          {folderPath ? folderPath.split('/').pop() : 'Choose Folder'}
+          Browse…
         </button>
+
+        <input
+          className="folder-input"
+          type="text"
+          placeholder="Or paste a path, e.g. /Users/you/myproject"
+          value={folderPath ?? ''}
+          onChange={e => setFolderPath(e.target.value || null)}
+          spellCheck={false}
+        />
 
         {folderPath && (
           <p className="folder-path">{folderPath}</p>

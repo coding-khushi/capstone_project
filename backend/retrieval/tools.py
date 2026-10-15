@@ -4,12 +4,32 @@ from __future__ import annotations
 import platform
 import re
 import subprocess
+import zipfile
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from database import get_engine
 from database.models import Symbol, ProjectFile, Project
+
+# Optional document-reading libraries — checked once at import time
+try:
+    from pptx import Presentation as _PptxPresentation  # type: ignore
+    _HAS_PPTX = True
+except ImportError:
+    _HAS_PPTX = False
+
+try:
+    import pypdf as _pypdf  # type: ignore
+    _HAS_PYPDF = True
+except ImportError:
+    _HAS_PYPDF = False
+
+try:
+    from docx import Document as _DocxDocument  # type: ignore
+    _HAS_DOCX = True
+except ImportError:
+    _HAS_DOCX = False
 
 
 # ---------------------------------------------------------------------------
@@ -52,8 +72,79 @@ def get_active_file() -> dict:
 
 def get_file(path: str) -> dict:
     """Return the full content of a file."""
+    return read_document(path)
+
+
+def read_document(path: str) -> dict:
+    """Read a file for context. Handles .pptx, .pdf, .docx, .zip, and plain text."""
+    p = Path(path)
+    ext = p.suffix.lower()
+
+    if ext == '.pptx':
+        if not _HAS_PPTX:
+            return {"path": path, "error": "python-pptx not available (pip install python-pptx)"}
+        try:
+            prs = _PptxPresentation(path)
+            slide_texts = []
+            for i, slide in enumerate(prs.slides, 1):
+                texts = [
+                    shape.text.strip()
+                    for shape in slide.shapes
+                    if hasattr(shape, 'text') and shape.text.strip()
+                ]
+                if texts:
+                    slide_texts.append(f"[Slide {i}]\n" + "\n".join(texts))
+            content = "\n\n".join(slide_texts) or "(No text found in presentation)"
+            return {"path": path, "content": content, "lines": len(slide_texts)}
+        except Exception as e:
+            return {"path": path, "error": str(e)}
+
+    if ext == '.pdf':
+        if not _HAS_PYPDF:
+            return {"path": path, "error": "pypdf not available (pip install pypdf)"}
+        try:
+            reader = _pypdf.PdfReader(path)
+            pages = []
+            for i, page in enumerate(reader.pages, 1):
+                text = page.extract_text() or ""
+                if text.strip():
+                    pages.append(f"[Page {i}]\n{text.strip()}")
+            content = "\n\n".join(pages) or "(No text found in PDF)"
+            return {"path": path, "content": content, "lines": len(pages)}
+        except Exception as e:
+            return {"path": path, "error": str(e)}
+
+    if ext in ('.docx', '.doc'):
+        if not _HAS_DOCX:
+            return {"path": path, "error": "python-docx not available (pip install python-docx)"}
+        try:
+            doc = _DocxDocument(path)
+            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+            content = "\n".join(paragraphs) or "(No text found in document)"
+            return {"path": path, "content": content, "lines": len(paragraphs)}
+        except Exception as e:
+            return {"path": path, "error": str(e)}
+
+    if ext == '.zip':
+        try:
+            parts = []
+            with zipfile.ZipFile(path, 'r') as zf:
+                for name in zf.namelist():
+                    if any(name.endswith(ext) for ext in ('.txt', '.md', '.py', '.js', '.ts', '.json', '.csv')):
+                        try:
+                            text = zf.read(name).decode('utf-8', errors='ignore').strip()
+                            if text:
+                                parts.append(f"[{name}]\n{text[:3000]}")
+                        except Exception:
+                            continue
+            content = "\n\n".join(parts) or "(No readable text files found in zip)"
+            return {"path": path, "content": content, "lines": len(parts)}
+        except Exception as e:
+            return {"path": path, "error": str(e)}
+
+    # Plain text fallback (.txt, .md, .py, .js, .ts, .csv, etc.)
     try:
-        content = Path(path).read_text(encoding="utf-8", errors="ignore")
+        content = p.read_text(encoding="utf-8", errors="ignore")
         return {"path": path, "content": content, "lines": len(content.splitlines())}
     except OSError as e:
         return {"path": path, "error": str(e)}

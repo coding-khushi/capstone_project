@@ -32,6 +32,14 @@ Rules:
 - Use get_file only if you genuinely need the full file and the user has granted access.
 - Keep answers concise and actionable.
 - Do not pretend to see information that is not in the screenshot or tool results.
+
+File detection:
+- Always scan the screenshot for visible file paths, document titles, or presentation names
+  in title bars, tab titles, window headers, or file explorer panels.
+- If you can see a document (PDF, PowerPoint, slides, Word doc, notebook, etc.) or file path
+  that would give you more complete context, call suggest_file_access with the visible name.
+- Call suggest_file_access BEFORE giving your answer, then continue to answer with what you can see.
+- Only suggest a file if it would genuinely help — not for every question.
 """
 
 
@@ -81,7 +89,36 @@ def _build_tools() -> list:
                 required=["path"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="suggest_file_access",
+            description=(
+                "Suggest that the user grant access to a file or document visible on screen "
+                "so you can give a more complete answer. Call this when you see a presentation, "
+                "PDF, notebook, document, or file path on screen that would significantly help. "
+                "After calling this, still answer with what you can see."
+            ),
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "path": types.Schema(type=types.Type.STRING, description="The filename or path visible on screen"),
+                    "reason": types.Schema(type=types.Type.STRING, description="One sentence on why access would help"),
+                },
+                required=["path", "reason"],
+            ),
+        ),
     ])]
+
+
+def _resolve_permitted_path(suggested: str, permitted_files: list[str]) -> str | None:
+    """Return the actual permitted path that matches a suggested (possibly short) path."""
+    if suggested in permitted_files:
+        return suggested
+    basename = suggested.replace("\\", "/").split("/")[-1]
+    for pf in permitted_files:
+        pf_base = pf.replace("\\", "/").split("/")[-1]
+        if pf_base == basename:
+            return pf
+    return None
 
 
 def _execute_tool(
@@ -127,17 +164,22 @@ def _execute_tool(
 
     elif name == "get_file":
         path = args.get("path", "")
-        if path not in permitted_files:
+        actual = _resolve_permitted_path(path, permitted_files)
+        if not actual:
             return f"Access to '{path}' requires user permission.", path
-        result = get_file(path)
+        result = get_file(actual)
         if "error" in result:
             return f"Could not read file: {result['error']}", None
-        if path not in sources:
-            sources.append(path)
+        if actual not in sources:
+            sources.append(actual)
         content = result.get("content", "")
         if len(content) > 8000:
             content = content[:8000] + "\n... (file truncated at 8000 chars)"
-        return f"Contents of {path}:\n{content}", None
+        return f"Contents of {actual}:\n{content}", None
+
+    elif name == "suggest_file_access":
+        # No-op execution — the caller handles this specially
+        return "Suggestion noted.", None
 
     return f"Unknown tool: {name}", None
 
@@ -167,6 +209,7 @@ def ask_gemini(
     tools_used: list[str] = []
     sources: list[str] = []
     permission_required: list[str] = []
+    suggested_files: list[str] = []
 
     # Build the initial user message parts
     initial_parts: list = []
@@ -184,8 +227,29 @@ def ask_gemini(
     text_parts: list[str] = []
     if active_file:
         text_parts.append(f"Active file: {active_file}")
+
+    # If the user has already granted file access, inject the content immediately
+    # so Gemini doesn't need to call suggest_file_access again.
+    if permitted_files:
+        from retrieval.tools import read_document
+        for pf in permitted_files:
+            result = read_document(pf)
+            if "error" not in result:
+                content = result.get("content", "")
+                if len(content) > 12000:
+                    content = content[:12000] + "\n... (truncated)"
+                text_parts.append(
+                    f"[The user granted access to this file: {pf}]\n{content}"
+                )
+                if pf not in sources:
+                    sources.append(pf)
+            else:
+                text_parts.append(
+                    f"[Access to {pf} was granted but it could not be read: {result['error']}]"
+                )
+
     text_parts.append(question or "Describe what is currently visible on the screen.")
-    initial_parts.append(types.Part.from_text("\n\n".join(text_parts)))
+    initial_parts.append(types.Part(text="\n\n".join(text_parts)))
 
     try:
         chat = client.chats.create(
@@ -218,6 +282,44 @@ def ask_gemini(
         for fc in function_calls:
             tool_name = fc.name
             tool_args = dict(fc.args) if fc.args else {}
+
+            # suggest_file_access: if already permitted, read the file; otherwise record suggestion
+            if tool_name == "suggest_file_access":
+                path = tool_args.get("path", "")
+                actual = _resolve_permitted_path(path, permitted_files) if path else None
+                if actual:
+                    # User already approved — read the file and feed contents back
+                    from retrieval.tools import read_document as _read_doc
+                    result = _read_doc(actual)
+                    if "error" in result:
+                        file_result = f"Could not read '{actual}': {result['error']}"
+                    else:
+                        content = result.get("content", "")
+                        if len(content) > 12000:
+                            content = content[:12000] + "\n... (truncated)"
+                        file_result = f"Contents of {actual}:\n{content}"
+                        if actual not in sources:
+                            sources.append(actual)
+                    tool_response_parts.append(
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                name=tool_name,
+                                response={"result": file_result},
+                            )
+                        )
+                    )
+                else:
+                    if path and path not in suggested_files:
+                        suggested_files.append(path)
+                    tool_response_parts.append(
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                name=tool_name,
+                                response={"result": "Suggestion recorded. Answer with what you can see on screen."},
+                            )
+                        )
+                    )
+                continue
 
             if tool_name not in tools_used:
                 tools_used.append(tool_name)
@@ -253,4 +355,4 @@ def ask_gemini(
             return f"Gemini API error during tool execution: {exc}", tools_used, sources, []
 
     answer = response.text or "I couldn't generate a response."
-    return answer, tools_used, list(dict.fromkeys(sources)), []
+    return answer, tools_used, list(dict.fromkeys(sources)), suggested_files

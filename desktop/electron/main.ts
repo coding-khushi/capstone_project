@@ -129,9 +129,23 @@ ipcMain.handle('get-screen-source', async () => {
   }
 })
 
+// IPC: open file picker dialog (for granting file access from suggestion banner)
+ipcMain.handle('select-file', async (_event, hint?: string) => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    defaultPath: hint ? path.dirname(hint) : app.getPath('home'),
+    title: 'Select the file Percept can read',
+  })
+  if (result.canceled || result.filePaths.length === 0) return { path: null }
+  return { path: result.filePaths[0] }
+})
+
 // IPC: open folder picker dialog for project selection
 ipcMain.handle('select-folder', async () => {
-  const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: app.getPath('home'),
+  })
   if (result.canceled || result.filePaths.length === 0) return { path: null }
   return { path: result.filePaths[0] }
 })

@@ -22,6 +22,7 @@ class QueryResponse(BaseModel):
     sources: list[str] = []
     tools_used: list[str] = []
     permission_required: list[str] = []
+    suggested_files: list[str] = []
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -35,18 +36,23 @@ async def query(req: QueryRequest):
 
     active_file = req.active_file or get_active_file().get("path")
 
-    answer, tools_used, sources, permission_required = ask_gemini(
+    answer, tools_used, sources, suggested_files = ask_gemini(
         question=req.question,
         screen=screen,
         active_file=active_file,
         permitted_files=req.permitted_files,
     )
 
+    permission_required = suggested_files if answer == "__permission_required__" else []
+    if answer == "__permission_required__":
+        answer = "I need file access to answer this fully."
+
     return QueryResponse(
         answer=answer,
         sources=sources,
         tools_used=tools_used,
         permission_required=permission_required,
+        suggested_files=suggested_files if not permission_required else [],
     )
 
 
