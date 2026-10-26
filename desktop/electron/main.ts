@@ -87,7 +87,7 @@ ipcMain.handle('capture-screen', async () => {
   try {
     // Hide window so it doesn't appear in the screenshot
     mainWindow?.hide()
-    await new Promise(resolve => setTimeout(resolve, 300))
+    await new Promise(resolve => setTimeout(resolve, 500))
 
     const sources = await desktopCapturer.getSources({
       types: ['screen'],

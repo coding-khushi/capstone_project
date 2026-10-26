@@ -5,8 +5,14 @@ from screen.processor import process_screenshot
 from ai.context_manager import ask_gemini
 from retrieval.tools import get_active_file
 from indexing.indexer import index_project_path, get_project_structure
+from debug_logger import log_interaction
 
 router = APIRouter()
+
+
+class ChatHistoryItem(BaseModel):
+    role: str
+    text: str
 
 
 class QueryRequest(BaseModel):
@@ -15,6 +21,7 @@ class QueryRequest(BaseModel):
     ocr_text: list[str] | None = None
     active_file: str | None = None
     permitted_files: list[str] = []
+    history: list[ChatHistoryItem] = []
 
 
 class QueryResponse(BaseModel):
@@ -41,11 +48,24 @@ async def query(req: QueryRequest):
         screen=screen,
         active_file=active_file,
         permitted_files=req.permitted_files,
+        history=[{"role": h.role, "text": h.text} for h in req.history],
     )
 
     permission_required = suggested_files if answer == "__permission_required__" else []
     if answer == "__permission_required__":
         answer = "I need file access to answer this fully."
+
+    log_interaction(
+        question=req.question,
+        screenshot_b64=req.screenshot_b64,
+        permitted_files=req.permitted_files,
+        history=[{"role": h.role, "text": h.text} for h in req.history],
+        answer=answer,
+        tools_used=tools_used,
+        sources=sources,
+        suggested_files=suggested_files if not permission_required else [],
+        permission_required=permission_required,
+    )
 
     return QueryResponse(
         answer=answer,

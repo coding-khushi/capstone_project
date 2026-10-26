@@ -27,19 +27,36 @@ You have tools to look up code in the user's indexed project:
 - find_references: find where a symbol is used
 - get_file: read a full file (only when explicitly permitted by the user)
 
-Rules:
-- Use tools when the question requires code context beyond what is visible on screen.
-- Use get_file only if you genuinely need the full file and the user has granted access.
-- Keep answers concise and actionable.
-- Do not pretend to see information that is not in the screenshot or tool results.
+## Core answering principle
+You are a knowledgeable AI first. File and screen content is CONTEXT that grounds your answer — it is never a cage. Always combine:
+1. What the file/screen says (for grounding, examples, specific slide references)
+2. Your own broad knowledge (for explanations, depth, connections, things the file does not cover)
 
-File detection:
-- Always scan the screenshot for visible file paths, document titles, or presentation names
-  in title bars, tab titles, window headers, or file explorer panels.
-- If you can see a document (PDF, PowerPoint, slides, Word doc, notebook, etc.) or file path
-  that would give you more complete context, call suggest_file_access with the visible name.
-- Call suggest_file_access BEFORE giving your answer, then continue to answer with what you can see.
-- Only suggest a file if it would genuinely help — not for every question.
+Never say "the file doesn't cover this" and stop. If the file covers a topic partially, fill the gaps with your knowledge. If the question is only loosely related to the file, answer it fully from your knowledge and briefly note how the file connects.
+
+## General rules
+- Answer general knowledge, coding, math, and factual questions directly from your knowledge. Do NOT call tools for these.
+- Use tools only when the question requires code or file content not visible on screen.
+- Keep answers concise and actionable.
+- You have conversation history — use it and do not repeat prior answers verbatim.
+
+## File access rules
+- Only call suggest_file_access if the question is about, or would benefit from, a specific document's content.
+- Do NOT call suggest_file_access for questions that have nothing to do with the file.
+- If a file is already loaded in this conversation, use it as context without calling suggest_file_access again.
+- Pre-approved files are available — only pull one in when it is clearly relevant to THIS question.
+
+## How to use file content
+When you have loaded file content:
+- Extract relevant facts, slide content, or passages to ground your answer.
+- Then EXPAND beyond the file using your knowledge: explain concepts more deeply, add examples the file doesn't have, connect to related ideas, answer follow-up angles.
+- If the user asks something the file covers partially, answer the part from the file AND fill the rest from your knowledge.
+- If the user asks something the file doesn't cover at all but context helps, briefly note the connection and answer fully from your knowledge.
+
+## Screen/file detection
+- If you see a document (PDF, PPT, slides, Word, notebook) in the screenshot and the question relates to it, call suggest_file_access with the visible filename.
+- Call suggest_file_access BEFORE answering, then answer combining the file and your knowledge.
+- Only suggest a file when it would genuinely improve your answer.
 """
 
 
@@ -175,7 +192,13 @@ def _execute_tool(
         content = result.get("content", "")
         if len(content) > 8000:
             content = content[:8000] + "\n... (file truncated at 8000 chars)"
-        return f"Contents of {actual}:\n{content}", None
+        fname = actual.split("/")[-1]
+        return (
+            f"[Context from {fname}]\n{content}\n\n"
+            f"Use the above as grounding context. Combine it with your own knowledge "
+            f"to give a complete, thorough answer — do not limit yourself to only "
+            f"what is in the file."
+        ), None
 
     elif name == "suggest_file_access":
         # No-op execution — the caller handles this specially
@@ -189,6 +212,7 @@ def ask_gemini(
     screen: ScreenContext | None = None,
     active_file: str | None = None,
     permitted_files: list[str] | None = None,
+    history: list[dict] | None = None,
 ) -> tuple[str, list[str], list[str], list[str]]:
     """Run the Percept agent loop.
 
@@ -228,28 +252,26 @@ def ask_gemini(
     if active_file:
         text_parts.append(f"Active file: {active_file}")
 
-    # If the user has already granted file access, inject the content immediately
-    # so Gemini doesn't need to call suggest_file_access again.
+    # Tell Gemini which files are pre-approved. Only load them when the question
+    # is DIRECTLY about the file content — not for general questions.
     if permitted_files:
-        from retrieval.tools import read_document
-        for pf in permitted_files:
-            result = read_document(pf)
-            if "error" not in result:
-                content = result.get("content", "")
-                if len(content) > 12000:
-                    content = content[:12000] + "\n... (truncated)"
-                text_parts.append(
-                    f"[The user granted access to this file: {pf}]\n{content}"
-                )
-                if pf not in sources:
-                    sources.append(pf)
-            else:
-                text_parts.append(
-                    f"[Access to {pf} was granted but it could not be read: {result['error']}]"
-                )
+        names = "\n".join(f"  - {pf}" for pf in permitted_files)
+        text_parts.append(
+            f"[Pre-approved files — call suggest_file_access ONLY when the question explicitly "
+            f"asks about content inside one of these files. For all other questions, do not call "
+            f"suggest_file_access at all.]\n{names}"
+        )
 
     text_parts.append(question or "Describe what is currently visible on the screen.")
     initial_parts.append(types.Part(text="\n\n".join(text_parts)))
+
+    chat_history: list[types.Content] = []
+    if history:
+        for msg in history:
+            role = msg.get("role", "user")
+            text = msg.get("text", "")
+            if text:
+                chat_history.append(types.Content(role=role, parts=[types.Part(text=text)]))
 
     try:
         chat = client.chats.create(
@@ -260,6 +282,7 @@ def ask_gemini(
                 temperature=0.2,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             ),
+            history=chat_history,
         )
         response = chat.send_message(initial_parts)
     except Exception as exc:
@@ -297,7 +320,13 @@ def ask_gemini(
                         content = result.get("content", "")
                         if len(content) > 12000:
                             content = content[:12000] + "\n... (truncated)"
-                        file_result = f"Contents of {actual}:\n{content}"
+                        fname = actual.split("/")[-1]
+                        file_result = (
+                            f"[Context from {fname}]\n{content}\n\n"
+                            f"Use the above as grounding context. Combine it with your own knowledge "
+                            f"to give a complete, thorough answer — do not limit yourself to only "
+                            f"what is in the file."
+                        )
                         if actual not in sources:
                             sources.append(actual)
                     tool_response_parts.append(

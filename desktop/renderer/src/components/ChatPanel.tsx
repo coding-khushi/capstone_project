@@ -51,8 +51,6 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
   const [suggestedFiles, setSuggestedFiles] = useState<string[] | null>(null)
   const [alreadyPermitted, setAlreadyPermitted] = useState<Set<string>>(new Set())
 
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -64,55 +62,15 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
     inputRef.current?.focus()
   }, [])
 
-  // Clean up stream on unmount
-  useEffect(() => {
-    return () => { streamRef.current?.getTracks().forEach(t => t.stop()) }
-  }, [])
-
-  async function startRecording() {
-    const result = await window.percept.getScreenSource()
-    if (!result.success || !result.sourceId) {
-      addAssistantMessage(`Could not start recording: ${result.error ?? 'no screen source'}`)
-      return
-    }
-    try {
-      const stream = await (navigator.mediaDevices.getUserMedia as (c: object) => Promise<MediaStream>)({
-        audio: false,
-        video: {
-          mandatory: {
-            chromeMediaSource: 'desktop',
-            chromeMediaSourceId: result.sourceId,
-            minWidth: 1280, maxWidth: 1920,
-            minHeight: 720, maxHeight: 1080,
-          },
-        },
-      })
-      streamRef.current = stream
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        videoRef.current.play()
-      }
-      setIsRecording(true)
-    } catch (err) {
-      addAssistantMessage(`Recording failed: ${String(err)}`)
-    }
+  function toggleScreenshot() {
+    setIsRecording(prev => !prev)
   }
 
-  function stopRecording() {
-    streamRef.current?.getTracks().forEach(t => t.stop())
-    streamRef.current = null
-    if (videoRef.current) videoRef.current.srcObject = null
-    setIsRecording(false)
-  }
-
-  function captureFrame(): string | null {
-    const video = videoRef.current
-    if (!video || !isRecording || video.videoWidth === 0) return null
-    const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    canvas.getContext('2d')?.drawImage(video, 0, 0)
-    return canvas.toDataURL('image/jpeg', 0.85)
+  async function captureFrame(): Promise<string | null> {
+    if (!isRecording) return null
+    const result = await window.percept.captureScreen()
+    if (!result.success || !result.dataURL) return null
+    return result.dataURL
   }
 
   function addAssistantMessage(content: string) {
@@ -130,6 +88,12 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
   ) {
     setIsLoading(true)
     try {
+      // Build conversation history from the last 6 messages (3 exchanges), skipping the welcome message
+      const history = messages
+        .filter(m => m.id !== '0')
+        .slice(-6)
+        .map(m => ({ role: m.role === 'user' ? 'user' : 'model', text: m.content }))
+
       const response = await fetch('http://localhost:8000/api/v1/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -138,6 +102,7 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
           screenshot_b64: frameDataURL ?? null,
           active_file: null,
           permitted_files: permittedFiles,
+          history,
         }),
       })
 
@@ -164,9 +129,6 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
         if (fresh.length > 0) setSuggestedFiles(fresh)
       }
 
-      if (data.sources?.length > 0) {
-        addAssistantMessage(`_Sources: ${data.sources.join(', ')}_`)
-      }
     } catch (err) {
       addAssistantMessage(
         `Could not reach backend: ${err instanceof Error ? err.message : String(err)}. ` +
@@ -181,7 +143,7 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
     const text = input.trim()
     if (!text || isLoading) return
 
-    const frameDataURL = captureFrame()
+    const frameDataURL = await captureFrame()
 
     if (isRecording && frameDataURL) {
       setShowCapturedToast(true)
@@ -200,7 +162,6 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
     setSuggestedFiles(null)
     setPendingQuery({ question: text, frameDataURL })
 
-    // Pass already-permitted files so the backend injects their content on every query
     await sendQuery(text, frameDataURL, [...alreadyPermitted])
   }
 
@@ -237,6 +198,28 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
     setSuggestedFiles(null)
   }
 
+  function handleNewChat() {
+    setMessages([{
+      id: Date.now().toString(),
+      role: 'assistant',
+      content: "New chat started. I'm Percept — press record and ask me anything.",
+      timestamp: new Date(),
+    }])
+    setInput('')
+    setAlreadyPermitted(new Set())
+    setSuggestedFiles(null)
+    setPendingQuery(null)
+    setPendingPermission(null)
+  }
+
+  function handleRevokeFile(path: string) {
+    setAlreadyPermitted(prev => {
+      const next = new Set(prev)
+      next.delete(path)
+      return next
+    })
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -244,10 +227,10 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
     }
   }
 
+  const permittedList = [...alreadyPermitted]
+
   return (
     <div className="chat-panel">
-      {/* Hidden video element for screen recording */}
-      <video ref={videoRef} style={{ display: 'none' }} muted />
 
       {/* Permission modal overlay */}
       {pendingPermission && (
@@ -271,6 +254,11 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
               <path d="M1 4a1 1 0 011-1h3l1.5 1.5H12a1 1 0 011 1V11a1 1 0 01-1 1H2a1 1 0 01-1-1V4z" stroke="currentColor" strokeWidth="1.3"/>
             </svg>
           </button>
+          <button className="header-btn" onClick={handleNewChat} title="New chat">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
           <button className="close-btn" onClick={onClose} title="Minimize">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M2 7h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -278,6 +266,23 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
           </button>
         </div>
       </div>
+
+      {/* Active file permissions chips */}
+      {permittedList.length > 0 && (
+        <div className="permitted-files-bar">
+          {permittedList.map(path => (
+            <div key={path} className="file-chip">
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ flexShrink: 0 }}>
+                <path d="M2 1h4l2 2v6H2V1z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round"/>
+              </svg>
+              <span className="file-chip-name">{path.split('/').pop()}</span>
+              <button className="file-chip-remove" onClick={() => handleRevokeFile(path)} title="Revoke access">
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Recording status bar */}
       {isRecording && (
@@ -312,7 +317,7 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
           </div>
           <div className="suggestion-actions">
             <button className="suggestion-dismiss" onClick={handleSuggestionDismiss}>Skip</button>
-            <button className="suggestion-allow" onClick={handleSuggestionAllow}>Allow Once</button>
+            <button className="suggestion-allow" onClick={handleSuggestionAllow}>Grant Access</button>
           </div>
         </div>
       )}
@@ -331,7 +336,7 @@ export default function ChatPanel({ onClose, onOpenProject }: Props) {
       <div className="input-area">
         <button
           className={`record-btn ${isRecording ? 'active' : ''}`}
-          onClick={isRecording ? stopRecording : startRecording}
+          onClick={toggleScreenshot}
           title={isRecording ? 'Stop recording' : 'Start recording'}
         >
           {isRecording ? (
