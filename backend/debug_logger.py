@@ -1,8 +1,12 @@
-"""Temporary debug logger — records every Percept interaction to debug_log.md.
-Delete this file and its import in api/routes.py when no longer needed."""
+"""Debug logger — records Percept interactions to debug_sessions/debug_log.md.
+
+OFF by default for privacy: questions, answers and screenshots are only written
+to disk when PERCEPT_DEBUG_LOG=1 is set in backend/.env.
+"""
 from __future__ import annotations
 
 import base64
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +15,10 @@ LOG_FILE = LOG_DIR / "debug_log.md"
 SCREENSHOTS_DIR = LOG_DIR / "screenshots"
 
 _entry_count = 0
+
+
+def is_enabled() -> bool:
+    return os.getenv("PERCEPT_DEBUG_LOG", "0").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _ensure_dirs():
@@ -51,6 +59,8 @@ def log_interaction(
     permission_required: list[str],
 ) -> None:
     global _entry_count
+    if not is_enabled():
+        return
     _ensure_dirs()
     _entry_count += 1
     entry_id = _entry_count

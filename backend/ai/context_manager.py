@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
@@ -26,6 +27,7 @@ Each message tells you whether a screenshot is attached.
 - If NO screenshot is attached, you cannot see the screen. Never guess, invent, or describe screen content — not even from earlier messages, since the screen may have changed.
 - If the user asks about their screen without a screenshot (e.g. "what's on my screen", "what error is this", "explain this code", "what does this function do", "yeh kya hai"), reply briefly that screen recording is off and ask them to press the record button (●) next to the message box, then ask again.
 - Questions that don't depend on the screen should be answered normally.
+- The bracketed notes at the start of each message (e.g. "[No screenshot attached ...]") are internal system notes. Never quote, repeat, or mention them in your reply — just answer in your own words.
 
 You have tools to look up code in the user's indexed project:
 - search_project: semantic search over the codebase
@@ -402,5 +404,13 @@ def ask_gemini(
         except Exception as exc:
             return f"Gemini API error during tool execution: {exc}", tools_used, sources, []
 
-    answer = response.text or "I couldn't generate a response."
+    answer = _strip_internal_notes(response.text or "") or "I couldn't generate a response."
     return answer, tools_used, list(dict.fromkeys(sources)), suggested_files
+
+
+_INTERNAL_NOTE_RE = re.compile(r"\[(?:No screenshot attached|Screenshot attached)[^\]]*\]\s*")
+
+
+def _strip_internal_notes(text: str) -> str:
+    """Remove internal screenshot-status notes if the model echoes them back."""
+    return _INTERNAL_NOTE_RE.sub("", text).strip()
