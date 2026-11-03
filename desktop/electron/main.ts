@@ -27,6 +27,10 @@ function createWindow() {
     },
   })
 
+  // Exclude Percept's own panel from screen capture so recorded frames never
+  // include its chat (Windows 10 2004+ and macOS).
+  mainWindow.setContentProtection(true)
+
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
   } else {
