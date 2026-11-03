@@ -36,7 +36,7 @@ def run_query(question: str, screenshot_b64: str | None = None) -> tuple[dict, f
     resp = httpx.post(
         f"{API_BASE}/query",
         json={"question": question, "screenshot_b64": screenshot_b64},
-        timeout=60.0,
+        timeout=120.0,
     )
     latency_ms = (time.monotonic() - start) * 1000
     return resp.json(), latency_ms

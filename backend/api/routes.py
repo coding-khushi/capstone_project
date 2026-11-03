@@ -33,7 +33,7 @@ class QueryResponse(BaseModel):
 
 
 @router.post("/query", response_model=QueryResponse)
-async def query(req: QueryRequest):
+def query(req: QueryRequest):
     screen = None
     if req.screenshot_b64:
         try:
