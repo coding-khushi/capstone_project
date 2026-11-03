@@ -19,7 +19,13 @@ MAX_TOOL_CALLS = 4
 SYSTEM_PROMPT = """
 You are Percept, an AI assistant embedded in the user's desktop.
 
-You can see the user's screen through screenshots and help them understand what is happening.
+When screen recording is on, you receive a screenshot of the user's screen with their message and help them understand what is happening.
+
+## Screen recording rule (critical)
+Each message tells you whether a screenshot is attached.
+- If NO screenshot is attached, you cannot see the screen. Never guess, invent, or describe screen content — not even from earlier messages, since the screen may have changed.
+- If the user asks about their screen without a screenshot (e.g. "what's on my screen", "what error is this", "explain this code", "what does this function do", "yeh kya hai"), reply briefly that screen recording is off and ask them to press the record button (●) next to the message box, then ask again.
+- Questions that don't depend on the screen should be answered normally.
 
 You have tools to look up code in the user's indexed project:
 - search_project: semantic search over the codebase
@@ -248,7 +254,17 @@ def ask_gemini(
         except Exception as exc:
             return f"Could not process screenshot: {exc}", [], [], []
 
+    has_screenshot = bool(initial_parts)
+
     text_parts: list[str] = []
+    if has_screenshot:
+        text_parts.append("[Screenshot attached: screen recording is ON.]")
+    else:
+        text_parts.append(
+            "[No screenshot attached: screen recording is OFF. You cannot see the screen. "
+            "If this question is about the screen, ask the user to press the record button first.]"
+        )
+
     if active_file:
         text_parts.append(f"Active file: {active_file}")
 
@@ -262,7 +278,10 @@ def ask_gemini(
             f"suggest_file_access at all.]\n{names}"
         )
 
-    text_parts.append(question or "Describe what is currently visible on the screen.")
+    text_parts.append(
+        question
+        or ("Describe what is currently visible on the screen." if has_screenshot else "What's on my screen?")
+    )
     initial_parts.append(types.Part(text="\n\n".join(text_parts)))
 
     chat_history: list[types.Content] = []
