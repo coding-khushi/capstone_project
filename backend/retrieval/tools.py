@@ -37,8 +37,11 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def get_active_file() -> dict:
-    """Detect the file currently open in VS Code (macOS only via AppleScript)."""
-    if platform.system() != "Darwin":
+    """Detect the file currently open in VS Code (macOS via AppleScript, Windows via Win32 API)."""
+    system = platform.system()
+    if system == "Windows":
+        return _get_active_file_windows()
+    if system != "Darwin":
         return {"path": None, "app": None}
 
     script = """
@@ -62,6 +65,55 @@ def get_active_file() -> dict:
         )
         path = result.stdout.strip()
         return {"path": path if path else None, "app": "Visual Studio Code"}
+    except Exception:
+        return {"path": None, "app": None}
+
+
+def _parse_vscode_title(title: str) -> str | None:
+    """Extract the file name from a VS Code window title.
+
+    VS Code titles look like "● main.py - capstone_project - Visual Studio Code"
+    (the dot marks unsaved changes). Returns None for non-file views like "Welcome".
+    """
+    if not title.endswith("Visual Studio Code"):
+        return None
+    first = title.split(" - ")[0].lstrip("●○ ").strip()
+    if not first or first == "Visual Studio Code" or "." not in first:
+        return None
+    return first
+
+
+def _get_active_file_windows() -> dict:
+    """Find the most recently used VS Code window on Windows and parse its title.
+
+    EnumWindows walks windows in z-order (front to back), so the first VS Code
+    window found is the one the user used last — even when Percept itself is in front.
+    """
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        found: list[str] = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def _visit(hwnd, _lparam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if not length:
+                return True
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            if buf.value.endswith("Visual Studio Code"):
+                found.append(buf.value)
+                return False  # stop at the frontmost VS Code window
+            return True
+
+        user32.EnumWindows(_visit, 0)
+        name = _parse_vscode_title(found[0]) if found else None
+        if name is None:
+            return {"path": None, "app": None}
+        return {"path": name, "app": "Visual Studio Code"}
     except Exception:
         return {"path": None, "app": None}
 
