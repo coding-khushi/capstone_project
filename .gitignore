@@ -33,3 +33,6 @@ Thumbs.db
 
 # Evaluation outputs
 evaluation/results.csv
+
+# Debug logs and screenshots
+backend/debug_sessions/

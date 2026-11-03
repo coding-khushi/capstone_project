@@ -1,6 +1,6 @@
 """Phase 4: Screenshot preprocessing — strips data-URL prefix and validates format.
 
-PaddleOCR (full OCR) requires Python ≤ 3.11; Claude vision handles text extraction instead.
+PaddleOCR (full OCR) requires Python ≤ 3.11; Gemini vision handles text extraction instead.
 """
 from __future__ import annotations
 
