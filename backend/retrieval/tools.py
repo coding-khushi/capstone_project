@@ -1,6 +1,8 @@
 """Retrieval tools exposed to the agent. Phases 6 and 9."""
 from __future__ import annotations
 
+import io
+import os
 import platform
 import re
 import subprocess
@@ -127,16 +129,47 @@ def get_file(path: str) -> dict:
     return read_document(path)
 
 
+def _read_bytes(path: str) -> bytes:
+    """Read a file's bytes, even when another app (e.g. PowerPoint) has it open.
+
+    Office apps on Windows open documents in a way that makes a normal open()
+    fail with a sharing violation. In that case, retry with full Win32 sharing
+    (read + write + delete), which only reads and never blocks the other app.
+    """
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except PermissionError:
+        if platform.system() != "Windows":
+            raise
+    import ctypes
+    import msvcrt
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateFileW.restype = ctypes.c_void_p
+    GENERIC_READ, SHARE_ALL, OPEN_EXISTING = 0x80000000, 0x7, 3
+    handle = kernel32.CreateFileW(path, GENERIC_READ, SHARE_ALL, None, OPEN_EXISTING, 0, None)
+    if handle in (None, ctypes.c_void_p(-1).value):
+        raise PermissionError(f"Could not open {path} (Windows error {kernel32.GetLastError()})")
+    fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+    with os.fdopen(fd, "rb") as fh:  # closes the handle too
+        return fh.read()
+
+
 def read_document(path: str) -> dict:
     """Read a file for context. Handles .pptx, .pdf, .docx, .zip, and plain text."""
     p = Path(path)
     ext = p.suffix.lower()
+    try:
+        data = _read_bytes(path)
+    except OSError as e:
+        return {"path": path, "error": str(e)}
 
     if ext == '.pptx':
         if not _HAS_PPTX:
             return {"path": path, "error": "python-pptx not available (pip install python-pptx)"}
         try:
-            prs = _PptxPresentation(path)
+            prs = _PptxPresentation(io.BytesIO(data))
             slide_texts = []
             for i, slide in enumerate(prs.slides, 1):
                 texts = [
@@ -155,7 +188,7 @@ def read_document(path: str) -> dict:
         if not _HAS_PYPDF:
             return {"path": path, "error": "pypdf not available (pip install pypdf)"}
         try:
-            reader = _pypdf.PdfReader(path)
+            reader = _pypdf.PdfReader(io.BytesIO(data))
             pages = []
             for i, page in enumerate(reader.pages, 1):
                 text = page.extract_text() or ""
@@ -170,7 +203,7 @@ def read_document(path: str) -> dict:
         if not _HAS_DOCX:
             return {"path": path, "error": "python-docx not available (pip install python-docx)"}
         try:
-            doc = _DocxDocument(path)
+            doc = _DocxDocument(io.BytesIO(data))
             paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
             content = "\n".join(paragraphs) or "(No text found in document)"
             return {"path": path, "content": content, "lines": len(paragraphs)}
@@ -180,7 +213,7 @@ def read_document(path: str) -> dict:
     if ext == '.zip':
         try:
             parts = []
-            with zipfile.ZipFile(path, 'r') as zf:
+            with zipfile.ZipFile(io.BytesIO(data), 'r') as zf:
                 for name in zf.namelist():
                     if any(name.endswith(ext) for ext in ('.txt', '.md', '.py', '.js', '.ts', '.json', '.csv')):
                         try:
@@ -195,11 +228,8 @@ def read_document(path: str) -> dict:
             return {"path": path, "error": str(e)}
 
     # Plain text fallback (.txt, .md, .py, .js, .ts, .csv, etc.)
-    try:
-        content = p.read_text(encoding="utf-8", errors="ignore")
-        return {"path": path, "content": content, "lines": len(content.splitlines())}
-    except OSError as e:
-        return {"path": path, "error": str(e)}
+    content = data.decode("utf-8", errors="ignore")
+    return {"path": path, "content": content, "lines": len(content.splitlines())}
 
 
 def search_project(query: str, top_k: int = 5) -> list[dict]:

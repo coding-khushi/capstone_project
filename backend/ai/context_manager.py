@@ -138,9 +138,11 @@ def _resolve_permitted_path(suggested: str, permitted_files: list[str]) -> str |
     """Return the actual permitted path that matches a suggested (possibly short) path."""
     if suggested in permitted_files:
         return suggested
-    basename = suggested.replace("\\", "/").split("/")[-1]
+    # Case-insensitive: Windows/macOS file names are, and the model often
+    # re-capitalises names it reads from a title bar.
+    basename = suggested.replace("\\", "/").split("/")[-1].lower()
     for pf in permitted_files:
-        pf_base = pf.replace("\\", "/").split("/")[-1]
+        pf_base = pf.replace("\\", "/").split("/")[-1].lower()
         if pf_base == basename:
             return pf
     return None
