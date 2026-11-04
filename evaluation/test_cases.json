@@ -1,55 +1,92 @@
 [
   {
     "id": "SC-01",
-    "phase": "screen_only",
-    "description": "Error identification from visible screen",
-    "question": "What error is displayed on the screen?",
+    "category": "screen_sufficient",
+    "description": "Identify the error in a visible terminal traceback",
+    "screen": "traceback.png",
+    "question": "What error is shown on my screen and what caused it?",
     "requires_retrieval": false,
-    "expected_keywords": ["TypeError", "undefined", "error"]
+    "expected_keywords": [["TypeError"], ["NoneType", "None"]],
+    "expected_file": null
   },
   {
     "id": "SC-02",
-    "phase": "screen_only",
-    "description": "Code explanation from visible snippet",
-    "question": "What does this function do?",
+    "category": "screen_sufficient",
+    "description": "Explain a fully visible function",
+    "screen": "strip_notes.png",
+    "question": "What does the function on my screen do?",
     "requires_retrieval": false,
-    "expected_keywords": []
+    "expected_keywords": [["remov*", "strip*"], ["note*", "screenshot*"]],
+    "expected_file": null
+  },
+  {
+    "id": "SC-03",
+    "category": "screen_sufficient",
+    "description": "Read a condition from visible code",
+    "screen": "debug_enabled.png",
+    "question": "According to the code on my screen, when is debug logging enabled?",
+    "requires_retrieval": false,
+    "expected_keywords": [["PERCEPT_DEBUG_LOG"]],
+    "expected_file": null
+  },
+  {
+    "id": "SC-04",
+    "category": "screen_sufficient",
+    "description": "Read a value from visible code",
+    "screen": "routes_query.png",
+    "question": "What HTTP status code does this endpoint return if the screenshot is invalid?",
+    "requires_retrieval": false,
+    "expected_keywords": [["400"]],
+    "expected_file": null
   },
   {
     "id": "RT-01",
-    "phase": "retrieval",
-    "description": "Function definition lookup",
-    "question": "Where is calculate_total defined?",
+    "category": "needs_retrieval",
+    "description": "Definition lookup for a function called on screen",
+    "screen": "routes_query.png",
+    "question": "In which file is get_active_file defined?",
     "requires_retrieval": true,
-    "retrieval_tool": "find_definition",
-    "retrieval_symbol": "calculate_total",
-    "expected_keywords": ["utils.py", "def calculate_total"]
+    "expected_keywords": [["tools.py"]],
+    "expected_file": "tools.py"
   },
   {
     "id": "RT-02",
-    "phase": "retrieval",
-    "description": "Cross-file error explanation",
-    "question": "Why is this function returning None?",
+    "category": "needs_retrieval",
+    "description": "Definition + return type of a function called on screen",
+    "screen": "routes_query.png",
+    "question": "In which file is process_screenshot defined, and what type does it return?",
     "requires_retrieval": true,
-    "retrieval_tool": "find_definition",
-    "expected_keywords": ["return", "None"]
+    "expected_keywords": [["processor.py"], ["ScreenContext"]],
+    "expected_file": "processor.py"
   },
   {
     "id": "RT-03",
-    "phase": "retrieval",
-    "description": "Reference lookup",
-    "question": "Where is this function being called?",
+    "category": "needs_retrieval",
+    "description": "Reference lookup for a function defined on screen",
+    "screen": "tools_search_find.png",
+    "question": "Which other file in the project calls find_definition?",
     "requires_retrieval": true,
-    "retrieval_tool": "find_references",
-    "expected_keywords": []
+    "expected_keywords": [["context_manager.py"]],
+    "expected_file": "context_manager.py"
   },
   {
     "id": "RT-04",
-    "phase": "retrieval",
-    "description": "Project structure navigation",
-    "question": "What files are in this project?",
+    "category": "needs_retrieval",
+    "description": "Constant inside a function only called on screen",
+    "screen": "routes_query.png",
+    "question": "What is the maximum number of tool rounds ask_gemini allows before it must answer?",
     "requires_retrieval": true,
-    "retrieval_tool": "get_project_structure",
-    "expected_keywords": []
+    "expected_keywords": [["4", "four"]],
+    "expected_file": "context_manager.py"
+  },
+  {
+    "id": "RT-05",
+    "category": "needs_retrieval",
+    "description": "Detail inside a module imported on screen",
+    "screen": "tools_search_find.png",
+    "question": "Which sentence-transformers model does search_embeddings use?",
+    "requires_retrieval": true,
+    "expected_keywords": [["MiniLM"]],
+    "expected_file": "embeddings.py"
   }
 ]
