@@ -6,14 +6,19 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 
+// Window sizes for the two UI states. When collapsed, the window shrinks to the
+// floating button so its transparent area no longer blocks clicks on other apps.
+const EXPANDED_SIZE = { width: 400, height: 560 }
+const COLLAPSED_SIZE = { width: 210, height: 84 }
+
 function createWindow() {
   const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize
 
   mainWindow = new BrowserWindow({
-    width: 400,
-    height: 560,
-    x: screenWidth - 420,
-    y: screenHeight - 600,
+    width: EXPANDED_SIZE.width,
+    height: EXPANDED_SIZE.height,
+    x: screenWidth - EXPANDED_SIZE.width - 20,
+    y: screenHeight - EXPANDED_SIZE.height - 40,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -74,17 +79,31 @@ function toggleWindow() {
   if (mainWindow.isVisible()) {
     mainWindow.hide()
   } else {
-    positionWindow()
+    // Show where the user last left it (no snapping back to the corner).
     mainWindow.show()
     mainWindow.focus()
   }
 }
 
-function positionWindow() {
+// Resize while keeping the bottom-right corner fixed, clamped to the screen,
+// so the panel opens/closes in place wherever the user dragged the button.
+function resizeAnchored(size: { width: number; height: number }) {
   if (!mainWindow) return
-  const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize
-  mainWindow.setPosition(screenWidth - 420, screenHeight - 600)
+  const b = mainWindow.getBounds()
+  const area = screen.getDisplayMatching(b).workArea
+  let x = b.x + b.width - size.width
+  let y = b.y + b.height - size.height
+  x = Math.min(Math.max(x, area.x), area.x + area.width - size.width)
+  y = Math.min(Math.max(y, area.y), area.y + area.height - size.height)
+  mainWindow.setResizable(true)  // some platforms ignore setBounds on non-resizable windows
+  mainWindow.setBounds({ x, y, width: size.width, height: size.height })
+  mainWindow.setResizable(false)
 }
+
+// IPC: switch between the floating button (collapsed) and the full panel
+ipcMain.handle('set-collapsed', (_event, collapsed: boolean) => {
+  resizeAnchored(collapsed ? COLLAPSED_SIZE : EXPANDED_SIZE)
+})
 
 // IPC: capture screenshot
 ipcMain.handle('capture-screen', async () => {

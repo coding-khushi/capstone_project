@@ -25,6 +25,7 @@ declare global {
       selectFile: (hint?: string) => Promise<{ path: string | null }>
       hideWindow: () => Promise<void>
       getWindowState: () => Promise<{ isVisible: boolean }>
+      setCollapsed: (collapsed: boolean) => Promise<void>
     }
   }
 }

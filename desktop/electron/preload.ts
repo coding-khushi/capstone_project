@@ -18,4 +18,7 @@ contextBridge.exposeInMainWorld('percept', {
 
   getWindowState: (): Promise<{ isVisible: boolean }> =>
     ipcRenderer.invoke('get-window-state'),
+
+  setCollapsed: (collapsed: boolean): Promise<void> =>
+    ipcRenderer.invoke('set-collapsed', collapsed),
 })
